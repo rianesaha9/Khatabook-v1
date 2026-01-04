@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>KhataBook</title>
+
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#007bff">
+
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+<style>
+body {
+    font-family: Arial, sans-serif;
+    background: #f4f6f8;
+    padding: 20px;
+}
+.container {
+    max-width: 600px;
+    margin: auto;
+    background: white;
+    padding: 20px;
+    border-radius: 10px;
+    box-shadow: 0 0 15px rgba(0,0,0,0.1);
+}
+header {
+    text-align: center;
+    font-size: 30px;
+    font-weight: bold;
+    color: #007bff;
+    margin-bottom: 20px;
+}
+label {
+    font-weight: bold;
+    margin-top: 10px;
+    display: block;
+}
+input, select, textarea, button {
+    width: 100%;
+    padding: 8px;
+    margin-top: 5px;
+}
+textarea { display: none; }
+button {
+    margin-top: 15px;
+    border: none;
+    color: white;
+    padding: 10px;
+    border-radius: 5px;
+}
+.add { background: #007bff; }
+.export { background: #28a745; }
+.reset { background: #dc3545; }
+
+.summary, .budget {
+    margin-top: 25px;
+    padding-top: 15px;
+    border-top: 2px solid #ddd;
+}
+.progress {
+    background: #e0e0e0;
+    border-radius: 6px;
+    overflow: hidden;
+    height: 16px;
+    margin-top: 5px;
+}
+.progress-bar {
+    height: 100%;
+    background: #007bff;
+    width: 0%;
+}
+</style>
+</head>
+
+<body>
+
+<div class="container">
+
+<header>📘 KhataBook</header>
+
+<label>Amount</label>
+<input type="number" id="amount">
+
+<label>Spent From</label>
+<select id="paymentType" onchange="updateCards()">
+    <option value="">Select</option>
+    <option value="Credit">Credit Card</option>
+    <option value="Debit">Debit Card</option>
+</select>
+
+<label>Card</label>
+<select id="card"></select>
+
+<label>Category</label>
+<select id="category" onchange="toggleNotes()">
+    <option value="">Select</option>
+    <option>Grocery</option>
+    <option>Food (Dine-In)</option>
+    <option>Food (Order-In)</option>
+    <option>Travel</option>
+    <option>Shopping</option>
+    <option>Entertainment</option>
+    <option>Others</option>
+</select>
+
+<textarea id="notes" placeholder="Notes for Others"></textarea>
+
+<label>Date</label>
+<input type="date" id="date">
+
+<button class="add" onclick="addExpense()">Add Expense</button>
+<button class="export" onclick="exportExcel()">Export to Excel</button>
+<button class="reset" onclick="resetAll()">Reset Everything</button>
+
+<!-- CATEGORY BUDGETS -->
+<div class="budget">
+<h3>📊 Category Budget Usage</h3>
+
+<div>
+Groceries: ₹<span id="grocerySpent">0</span>/4500 (<span id="groceryPct">0</span>%)
+<div class="progress"><div id="groceryBar" class="progress-bar"></div></div>
+</div>
+
+<div>
+Food (Dine-In): ₹<span id="dineSpent">0</span>/6000 (<span id="dinePct">0</span>%)
+<div class="progress"><div id="dineBar" class="progress-bar"></div></div>
+</div>
+
+<div>
+Food (Order-In): ₹<span id="orderSpent">0</span>/6000 (<span id="orderPct">0</span>%)
+<div class="progress"><div id="orderBar" class="progress-bar"></div></div>
+</div>
+</div>
+
+<!-- SUMMARY -->
+<div class="summary">
+<h3>💳 Credit Card Spend</h3>
+<div id="creditSummary"></div>
+
+<h3>🏦 Debit Card Spend (Till Date)</h3>
+<div id="debitSummary">₹0</div>
+</div>
+
+</div>
+
+<script>
+if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("service-worker.js");
+}
+
+const cards = {
+    Credit: ["ICICI", "YesBank", "BOB", "HDFC", "IDFC", "Axis"],
+    Debit: ["ICICI", "HDFC", "SBI"]
+};
+
+const limits = {
+    "Grocery": 4500,
+    "Food (Dine-In)": 6000,
+    "Food (Order-In)": 6000
+};
+
+/* 🔴 IMPORTANT PART — DATA PERSISTENCE */
+let expenses = JSON.parse(localStorage.getItem("expenses")) || [];
+updateSummary();
+updateBudget();
+
+function updateCards() {
+    card.innerHTML = "";
+    if (!paymentType.value) return;
+    cards[paymentType.value].forEach(c => card.add(new Option(c, c)));
+}
+
+function toggleNotes() {
+    notes.style.display = category.value === "Others" ? "block" : "none";
+}
+
+function addExpense() {
+    if (!amount.value || !paymentType.value || !card.value || !category.value || !date.value) {
+        alert("Fill all fields");
+        return;
+    }
+
+    expenses.push({
+        Amount: Number(amount.value),
+        PaymentType: paymentType.value,
+        Card: card.value,
+        Category: category.value,
+        Notes: notes.value,
+        Date: date.value
+    });
+
+    localStorage.setItem("expenses", JSON.stringify(expenses));
+
+    updateSummary();
+    updateBudget();
+
+    document.querySelectorAll("input, select, textarea").forEach(e => e.value = "");
+    notes.style.display = "none";
+}
+
+function updateBudget() {
+    let totals = {};
+    expenses.forEach(e => {
+        if (limits[e.Category]) {
+            totals[e.Category] = (totals[e.Category] || 0) + e.Amount;
+        }
+    });
+
+    updateBar("Grocery", totals["Grocery"] || 0, 4500, "grocery");
+    updateBar("Food (Dine-In)", totals["Food (Dine-In)"] || 0, 6000, "dine");
+    updateBar("Food (Order-In)", totals["Food (Order-In)"] || 0, 6000, "order");
+}
+
+function updateBar(cat, spent, limit, id) {
+    let pct = Math.min((spent / limit) * 100, 100);
+    document.getElementById(id + "Spent").innerText = spent;
+    document.getElementById(id + "Pct").innerText = pct.toFixed(1);
+    document.getElementById(id + "Bar").style.width = pct + "%";
+}
+
+function updateSummary() {
+    let credit = {}, debit = 0;
+    expenses.forEach(e => {
+        if (e.PaymentType === "Credit") {
+            credit[e.Card] = (credit[e.Card] || 0) + e.Amount;
+        } else debit += e.Amount;
+    });
+
+    creditSummary.innerHTML = "";
+    for (let c in credit)
+        creditSummary.innerHTML += `<div>${c}: ₹${credit[c]}</div>`;
+
+    debitSummary.innerText = "₹" + debit;
+}
+
+function resetAll() {
+    if (!confirm("Are you sure you want to reset?")) return;
+    expenses = [];
+    localStorage.removeItem("expenses");
+    updateSummary();
+    updateBudget();
+}
+function exportExcel() {
+    if (!expenses.length) return alert("No data to export");
+    const wb = XLSX.utils.book_new();
+    const grouped = {};
+    expenses.forEach(e => {
+        const s = `${e.PaymentType}-${e.Card}`;
+        grouped[s] = grouped[s] || [];
+        grouped[s].push(e);
+    });
+    for (let s in grouped)
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(grouped[s]), s);
+    XLSX.writeFile(wb, "KhataBook.xlsx");
+}
+</script>
+
+</body>
+</html>
